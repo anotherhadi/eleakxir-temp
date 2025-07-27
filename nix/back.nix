@@ -49,7 +49,7 @@ in {
         after = ["network.target"];
         wantedBy = ["multi-user.target"];
         serviceConfig = {
-          ExecStart = "${self.packages.${pkgs.system}."${appname}-backend"}/bin/cmd";
+          ExecStart = "${self.packages.${pkgs.system}."backend"}/bin/cmd";
           Restart = "always";
           User = config.services."${appname}-backend".user;
           Group = config.services."${appname}-backend".group;
