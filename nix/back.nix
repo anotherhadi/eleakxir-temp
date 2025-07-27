@@ -98,11 +98,14 @@ in {
     config = lib.mkIf config.services."${appname}-backend".enable {
       launchd.user.agents."${appname}-backend" = {
         command = "${self.packages.${pkgs.system}."backend"}/bin/cmd";
-        keepAlive = true;
-        environmentVariables = {
-          LEAK_DIRECTORY = config.services."${appname}-backend".leakPath;
-          CACHE_DIRECTORY = config.services."${appname}-backend".cachePath;
-          PORT = toString config.services."${appname}-backend".port;
+        serviceConfig = {
+          enable = true;
+          KeepAlive = true;
+          EnvironmentVariables = {
+            LEAK_DIRECTORY = config.services."${appname}-backend".leakPath;
+            CACHE_DIRECTORY = config.services."${appname}-backend".cachePath;
+            PORT = toString config.services."${appname}-backend".port;
+          };
         };
       };
     };
