@@ -9,6 +9,10 @@
     version = "0.1.0";
     src = ../back;
     vendorHash = "sha256-xTVMERVvftdLJ8gT6OQRE+CrsHGOiYQ8tFPMTZc4A9U=";
+    buildInputs = [
+      pkgs.arrow-cpp
+      pkgs.duckdb
+    ];
   };
 in {
   package = backend;
