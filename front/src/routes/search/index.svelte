@@ -77,6 +77,9 @@
     cols = cols.split(",").map((col) => {
       return col.trim() === "name" ? "full_name" : col.trim();
     }).join(",");
+    if (cols === "name"){
+      cols = "full_name";
+    }
 
     if (!q) {
       alert("Please enter a search query.");
