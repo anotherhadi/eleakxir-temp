@@ -74,6 +74,9 @@
     if (cols === "all") {
       cols = "username,email,name,password";
     }
+    cols = cols.split(",").map((col) => {
+      return col.trim() === "name" ? "full_name" : col.trim();
+    }).join(",");
 
     if (!q) {
       alert("Please enter a search query.");

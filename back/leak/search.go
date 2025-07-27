@@ -19,8 +19,6 @@ type Query struct {
 	ExactMatch bool
 }
 
-// TODO: Create a full name columns with first name + last name or name
-
 func (d *Dataleaks) GetDataleakFromPath(path string) (*Dataleak, error) {
 	for _, leak := range d.Dataleaks {
 		if leak.Path == path {
