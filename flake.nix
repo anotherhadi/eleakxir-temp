@@ -49,6 +49,17 @@
         inherit self;
       };
 
+    darwinModules.eleakxir-backend = {
+      config,
+      lib,
+      pkgs,
+      ...
+    }:
+      (importBackend pkgs.system).darwinModule {
+        inherit config lib pkgs;
+        inherit self;
+      };
+
     devShells = eachSystem (system: {
       default = nixpkgs.legacyPackages.${system}.mkShell {
         packages = [

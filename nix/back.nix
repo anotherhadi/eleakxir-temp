@@ -69,4 +69,38 @@ in {
       };
     };
   };
+
+  darwinModule = {config, ...}: {
+    options.services."${appname}-backend" = {
+      enable = lib.mkEnableOption "Enable";
+      port = lib.mkOption {
+        type = lib.types.port;
+        default = 8080;
+        description = "Port on which the backend will listen.";
+      };
+      leakPath = lib.mkOption {
+        type = lib.types.str;
+        default = "";
+        description = "Path to the leaks directory.";
+      };
+      cachePath = lib.mkOption {
+        type = lib.types.str;
+        default = "";
+        description = "Path to the cache directory.";
+      };
+    };
+
+    config = lib.mkIf config.services."${appname}-backend".enable {
+      launchd.user.agents."${appname}-backend" = {
+        enable = true;
+        command = "${self.packages.${pkgs.system}."backend"}/bin/cmd";
+        keepAlive = true;
+        environmentVariables = {
+          LEAK_DIRECTORY = config.services."${appname}-backend".leakPath;
+          CACHE_DIRECTORY = config.services."${appname}-backend".cachePath;
+          PORT = toString config.services."${appname}-backend".port;
+        };
+      };
+    };
+  };
 }
