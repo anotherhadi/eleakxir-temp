@@ -7,11 +7,20 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"sync" // <-- Importez le package sync pour WaitGroup
 	"unicode"
 
 	"github.com/anotherhadi/eleakxir/leak"
 	"github.com/gin-gonic/gin"
 )
+
+// Définition de la structure pour les résultats et les erreurs des goroutines
+type SearchResult struct {
+	Results  interface{} // Utilisez interface{} car gin.H est map[string]interface{}
+	FilePath string
+	Error    error
+	Done     bool // Indique si ce résultat marque la fin du traitement pour un fichier
+}
 
 func sanitizeQuery(query string) string {
 	query = strings.TrimSpace(query)
@@ -32,10 +41,6 @@ func sanitizeQuery(query string) string {
 
 	// Collapse multiple spaces
 	query = regexp.MustCompile(`\s+`).ReplaceAllString(query, " ")
-
-	// Optional: block regex control chars if ExactMatch is false
-	// (handled already by regexp.QuoteMeta but can be conservative)
-	// query = strings.ReplaceAll(query, `\`, ``)
 
 	return query
 }
@@ -67,7 +72,7 @@ func (api *API) SetupRoutes() {
 		}
 
 		columns := strings.Split(c.Query("columns"), ",")
-		if len(columns) == 0 {
+		if len(columns) == 0 || (len(columns) == 1 && columns[0] == "") { // Handle empty string after split
 			sendSSEEvent(c.Writer, flusher, "error", gin.H{"message": "Invalid query: no columns provided."})
 			return
 		}
@@ -79,26 +84,66 @@ func (api *API) SetupRoutes() {
 
 		sendSSEEvent(c.Writer, flusher, "start", gin.H{"percentage": 0})
 
-		for i, file := range api.Dataleaks.Dataleaks {
-			progress := float64(i) / float64(api.Dataleaks.TotalDataleaks) * 100
+		// --- Début des modifications pour la concurrence ---
+		var wg sync.WaitGroup // Utilisé pour attendre que toutes les goroutines se terminent
+		// Canal pour envoyer les résultats et les erreurs des goroutines au thread principal
+		resultsChan := make(chan SearchResult)
+		// Canal pour envoyer les mises à jour de progression (optionnel, mais utile)
+		progressChan := make(chan float64)
 
-			sendSSEEvent(c.Writer, flusher, "progress", gin.H{
-				"percentage": progress,
-			})
-
-			results, err := api.Dataleaks.Search(file.Path, columns, query)
-			if err != nil {
-				sendSSEEvent(c.Writer, flusher, "file_error", gin.H{
-					"file_path": file.Path,
-					"message":   fmt.Sprintf("Error processing file: %s", err.Error()),
-				})
-				continue
-			}
-
-			sendSSEEvent(c.Writer, flusher, "new_results", gin.H{
-				"results": results,
-			})
+		// Lancer les goroutines pour la recherche de fichiers
+		for _, file := range api.Dataleaks.Dataleaks {
+			wg.Add(1) // Incrémente le compteur de goroutines à attendre
+			go func(filePath string) {
+				defer wg.Done() // Décrémente le compteur quand la goroutine se termine
+				// Effectuer la recherche
+				res, err := api.Dataleaks.Search(filePath, columns, query)
+				if err != nil {
+					// Envoyer l'erreur via le canal
+					resultsChan <- SearchResult{Error: err, FilePath: filePath}
+					return
+				}
+				// Envoyer les résultats via le canal
+				resultsChan <- SearchResult{Results: res, FilePath: filePath}
+			}(file.Path) // Passer le chemin du fichier à la goroutine
 		}
+
+		// Goroutine pour gérer l'envoi de la progression globale
+		// Cette goroutine est importante pour éviter les problèmes de concurrence
+		// lors de la mise à jour de la variable `processedFilesCount`
+		go func() {
+			for p := range progressChan {
+				sendSSEEvent(c.Writer, flusher, "progress", gin.H{
+					"percentage": p,
+				})
+			}
+		}()
+
+		// Goroutine pour fermer les canaux une fois que toutes les goroutines de recherche sont terminées
+		go func() {
+			wg.Wait()           // Attendre que toutes les goroutines de recherche soient terminées
+			close(resultsChan)  // Fermer le canal des résultats
+			close(progressChan) // Fermer le canal de progression
+		}()
+
+		// Boucle principale pour recevoir les résultats et les erreurs des goroutines
+		processedFilesCount := 0
+		for searchRes := range resultsChan {
+			if searchRes.Error != nil {
+				sendSSEEvent(c.Writer, flusher, "file_error", gin.H{
+					"file_path": searchRes.FilePath,
+					"message":   fmt.Sprintf("Error processing file: %s", searchRes.Error.Error()),
+				})
+			} else {
+				sendSSEEvent(c.Writer, flusher, "new_results", gin.H{
+					"results": searchRes.Results,
+				})
+			}
+			processedFilesCount++
+			// Envoyer la progression via le canal de progression
+			progressChan <- float64(processedFilesCount) / float64(api.Dataleaks.TotalDataleaks) * 100
+		}
+		// --- Fin des modifications pour la concurrence ---
 
 		sendSSEEvent(c.Writer, flusher, "complete", gin.H{})
 	})
