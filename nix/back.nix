@@ -99,7 +99,6 @@ in {
       launchd.user.agents."${appname}-backend" = {
         command = "${self.packages.${pkgs.system}."backend"}/bin/cmd";
         serviceConfig = {
-          enable = true;
           KeepAlive = true;
           EnvironmentVariables = {
             LEAK_DIRECTORY = config.services."${appname}-backend".leakPath;
