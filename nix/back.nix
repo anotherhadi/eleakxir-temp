@@ -70,7 +70,12 @@ in {
     };
   };
 
-  darwinModule = {config, ...}: {
+  darwinModule = {
+    config,
+    lib,
+    pkgs,
+    ...
+  }: {
     options.services."${appname}-backend" = {
       enable = lib.mkEnableOption "Enable";
       port = lib.mkOption {
@@ -92,7 +97,6 @@ in {
 
     config = lib.mkIf config.services."${appname}-backend".enable {
       launchd.user.agents."${appname}-backend" = {
-        enable = true;
         command = "${self.packages.${pkgs.system}."backend"}/bin/cmd";
         keepAlive = true;
         environmentVariables = {
