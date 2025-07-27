@@ -8,7 +8,7 @@
     pname = appname + "-backend";
     version = "0.1.0";
     src = ../back;
-    vendorHash = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB=";
+    vendorHash = "sha256-xTVMERVvftdLJ8gT6OQRE+CrsHGOiYQ8tFPMTZc4A9U=";
   };
 in {
   package = backend;
