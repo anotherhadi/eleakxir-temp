@@ -26,7 +26,3 @@ mv tmp fichier.csv
 ```
 
 ## Todolist
-
-- PARQUET FILES
-- COMPRESSION ZSTD
-- all_varchar=true
