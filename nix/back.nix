@@ -8,7 +8,7 @@
     pname = appname + "-backend";
     version = "0.1.0";
     src = ../back;
-    vendorHash = "";
+    vendorHash = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB=";
   };
 in {
   package = backend;
@@ -59,7 +59,7 @@ in {
           Environment = [
             "LEAK_DIRECTORY=${config.services."${appname}-backend".leakPath}"
             "CACHE_DIRECTORY=${config.services."${appname}-backend".cachePath}"
-            "PORT=${config.services."${appname}-backend".port}"
+            "PORT=${toString config.services."${appname}-backend".port}"
           ];
         };
       };
