@@ -1,7 +1,6 @@
 package api
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -100,7 +99,6 @@ func (api *API) SetupRoutes() {
 		sseChan <- sseMessage{"start", gin.H{"percentage": 0}}
 
 		// Launch concurrent workers for each dataleak
-		resultsChan := make(chan sseMessage)
 		done := make(chan struct{})
 
 		go func() {
