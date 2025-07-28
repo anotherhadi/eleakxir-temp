@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"sync"
 	"unicode"
 
 	"github.com/anotherhadi/eleakxir/leak"
@@ -16,13 +17,11 @@ import (
 func sanitizeQuery(query string) string {
 	query = strings.TrimSpace(query)
 
-	// Replace fancy quotes with standard ones
 	query = strings.ReplaceAll(query, "“", `"`)
 	query = strings.ReplaceAll(query, "”", `"`)
 	query = strings.ReplaceAll(query, "‘", `'`)
 	query = strings.ReplaceAll(query, "’", `'`)
 
-	// Remove non-printable and control characters
 	query = strings.Map(func(r rune) rune {
 		if unicode.IsControl(r) && r != '\n' && r != '\t' {
 			return -1
@@ -30,17 +29,10 @@ func sanitizeQuery(query string) string {
 		return r
 	}, query)
 
-	// Collapse multiple spaces
 	query = regexp.MustCompile(`\s+`).ReplaceAllString(query, " ")
-
-	// Optional: block regex control chars if ExactMatch is false
-	// (handled already by regexp.QuoteMeta but can be conservative)
-	// query = strings.ReplaceAll(query, `\`, ``)
 
 	return query
 }
-
-// TODO: implement full-text search
 
 func (api *API) SetupRoutes() {
 	api.Router.GET("/dataleaks", func(c *gin.Context) {
@@ -77,30 +69,53 @@ func (api *API) SetupRoutes() {
 			return
 		}
 
-		sendSSEEvent(c.Writer, flusher, "start", gin.H{"percentage": 0})
-
-		for i, file := range api.Dataleaks.Dataleaks {
-			progress := float64(i) / float64(api.Dataleaks.TotalDataleaks) * 100
-
-			sendSSEEvent(c.Writer, flusher, "progress", gin.H{
-				"percentage": progress,
-			})
-
-			results, err := api.Dataleaks.Search(file.Path, columns, query)
-			if err != nil {
-				sendSSEEvent(c.Writer, flusher, "file_error", gin.H{
-					"file_path": file.Path,
-					"message":   fmt.Sprintf("Error processing file: %s", err.Error()),
-				})
-				continue
-			}
-
-			sendSSEEvent(c.Writer, flusher, "new_results", gin.H{
-				"results": results,
-			})
+		type sseMsg struct {
+			event string
+			data  gin.H
 		}
 
-		sendSSEEvent(c.Writer, flusher, "complete", gin.H{})
+		sseChan := make(chan sseMsg, 100)
+		var wg sync.WaitGroup
+
+		// Writer goroutine
+		go func() {
+			for msg := range sseChan {
+				sendSSEEvent(c.Writer, flusher, msg.event, msg.data)
+			}
+		}()
+
+		sseChan <- sseMsg{"start", gin.H{"percentage": 0}}
+
+		for i, file := range api.Dataleaks.Dataleaks {
+			wg.Add(1)
+
+			go func(i int, file leak.Dataleak) {
+				defer wg.Done()
+
+				progress := float64(i) / float64(api.Dataleaks.TotalDataleaks) * 100
+				sseChan <- sseMsg{"progress", gin.H{"percentage": progress}}
+
+				results, err := api.Dataleaks.Search(file.Path, columns, query)
+				if err != nil {
+					sseChan <- sseMsg{"file_error", gin.H{
+						"file_path": file.Path,
+						"message":   fmt.Sprintf("Error processing file: %s", err.Error()),
+					}}
+					return
+				}
+
+				if len(results) > 0 {
+					sseChan <- sseMsg{"new_results", gin.H{"results": results}}
+				}
+			}(i, file)
+		}
+
+		// Fin de traitement
+		go func() {
+			wg.Wait()
+			sseChan <- sseMsg{"complete", gin.H{}}
+			close(sseChan)
+		}()
 	})
 }
 
