@@ -1,13 +1,13 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
 	"regexp"
 	"strings"
-	"sync"
 	"unicode"
 
 	"github.com/anotherhadi/eleakxir/leak"
@@ -34,17 +34,22 @@ func sanitizeQuery(query string) string {
 	return query
 }
 
+type sseMessage struct {
+	event string
+	data  gin.H
+}
+
 func (api *API) SetupRoutes() {
 	api.Router.GET("/dataleaks", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"dataleaks": api.Dataleaks})
 	})
 
 	api.Router.GET("/search", func(c *gin.Context) {
+		// Prepare headers for SSE
 		c.Writer.Header().Set("Content-Type", "text/event-stream")
 		c.Writer.Header().Set("Cache-Control", "no-cache")
 		c.Writer.Header().Set("Connection", "keep-alive")
 		c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
-		c.Writer.Flush()
 
 		flusher, ok := c.Writer.(http.Flusher)
 		if !ok {
@@ -52,79 +57,83 @@ func (api *API) SetupRoutes() {
 			return
 		}
 
+		// Context to cancel if client disconnects
+		ctx := c.Request.Context()
+
+		// Channel for safely sending events to the client
+		sseChan := make(chan sseMessage)
+		defer close(sseChan)
+
+		// Writer goroutine
+		go func() {
+			for {
+				select {
+				case msg, ok := <-sseChan:
+					if !ok {
+						return
+					}
+					sendSSEEvent(c.Writer, msg.event, msg.data)
+					flusher.Flush()
+				case <-ctx.Done():
+					return
+				}
+			}
+		}()
+
 		query := leak.ParseQuery(sanitizeQuery(c.Query("q")))
 		if len(query.Terms) == 0 {
-			sendSSEEvent(c.Writer, flusher, "error", gin.H{"message": "Invalid query: no search terms provided."})
+			sseChan <- sseMessage{"error", gin.H{"message": "Invalid query: no search terms provided."}}
 			return
 		}
 
 		columns := strings.Split(c.Query("columns"), ",")
-		if len(columns) == 0 {
-			sendSSEEvent(c.Writer, flusher, "error", gin.H{"message": "Invalid query: no columns provided."})
+		if len(columns) == 0 || (len(columns) == 1 && columns[0] == "") {
+			sseChan <- sseMessage{"error", gin.H{"message": "Invalid query: no columns provided."}}
 			return
 		}
 
 		if api.Dataleaks.TotalDataleaks == 0 {
-			sendSSEEvent(c.Writer, flusher, "error", gin.H{"message": "No parquet files configured."})
+			sseChan <- sseMessage{"error", gin.H{"message": "No parquet files configured."}}
 			return
 		}
 
-		type sseMsg struct {
-			event string
-			data  gin.H
-		}
+		sseChan <- sseMessage{"start", gin.H{"percentage": 0}}
 
-		sseChan := make(chan sseMsg, 100)
-		var wg sync.WaitGroup
+		// Launch concurrent workers for each dataleak
+		resultsChan := make(chan sseMessage)
+		done := make(chan struct{})
 
-		// Writer goroutine
 		go func() {
-			for msg := range sseChan {
-				sendSSEEvent(c.Writer, flusher, msg.event, msg.data)
-			}
-		}()
-
-		sseChan <- sseMsg{"start", gin.H{"percentage": 0}}
-
-		for i, file := range api.Dataleaks.Dataleaks {
-			wg.Add(1)
-
-			go func(i int, file leak.Dataleak) {
-				defer wg.Done()
-
+			defer close(done)
+			for i, file := range api.Dataleaks.Dataleaks {
 				progress := float64(i) / float64(api.Dataleaks.TotalDataleaks) * 100
-				sseChan <- sseMsg{"progress", gin.H{"percentage": progress}}
+				sseChan <- sseMessage{"progress", gin.H{"percentage": progress}}
 
 				results, err := api.Dataleaks.Search(file.Path, columns, query)
 				if err != nil {
-					sseChan <- sseMsg{"file_error", gin.H{
+					sseChan <- sseMessage{"file_error", gin.H{
 						"file_path": file.Path,
 						"message":   fmt.Sprintf("Error processing file: %s", err.Error()),
 					}}
-					return
+					continue
 				}
 
 				if len(results) > 0 {
-					sseChan <- sseMsg{"new_results", gin.H{"results": results}}
+					sseChan <- sseMessage{"new_results", gin.H{"results": results}}
 				}
-			}(i, file)
-		}
-
-		// Fin de traitement
-		go func() {
-			wg.Wait()
-			sseChan <- sseMsg{"complete", gin.H{}}
-			close(sseChan)
+			}
 		}()
+
+		<-done
+		sseChan <- sseMessage{"complete", gin.H{}}
 	})
 }
 
-func sendSSEEvent(w http.ResponseWriter, flusher http.Flusher, eventType string, data gin.H) {
+func sendSSEEvent(w http.ResponseWriter, eventType string, data gin.H) {
 	jsonData, err := json.Marshal(data)
 	if err != nil {
 		log.Printf("Error marshalling SSE data for event %s: %v", eventType, err)
 		return
 	}
 	fmt.Fprintf(w, "event: %s\ndata: %s\n\n", eventType, jsonData)
-	flusher.Flush()
 }
