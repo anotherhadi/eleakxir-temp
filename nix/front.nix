@@ -22,10 +22,6 @@ in
 
     bunNix = ../front/bun.nix;
 
-    outputHash = "sha256-iTup4o7YLrOgCuUp1OqsFNRTZATe3S9GTJzIkQ9YWwU=";
-    outputHashAlgo = "sha256";
-    outputHashMode = "recursive";
-
     index = null;
 
     nativeBuildInputs = [pkgs.bun pkgs.vite pkgs.typescript pkgs.rsync];

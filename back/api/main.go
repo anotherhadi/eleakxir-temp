@@ -28,10 +28,10 @@ func CORSMiddleware() gin.HandlerFunc {
 }
 
 func NewAPI(dataleaks *leak.Dataleaks, dev bool) *API {
-	router := gin.Default()
 	if dev == false {
 		gin.SetMode(gin.ReleaseMode)
 	}
+	router := gin.Default()
 	router.Use(CORSMiddleware())
 	api := &API{
 		Router:    router,

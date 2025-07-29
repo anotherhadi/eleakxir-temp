@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"regexp"
+	"slices"
 	"strings"
 	"unicode"
 
@@ -16,11 +17,13 @@ import (
 func sanitizeQuery(query string) string {
 	query = strings.TrimSpace(query)
 
+	// Replace fancy quotes with standard ones
 	query = strings.ReplaceAll(query, "“", `"`)
 	query = strings.ReplaceAll(query, "”", `"`)
 	query = strings.ReplaceAll(query, "‘", `'`)
 	query = strings.ReplaceAll(query, "’", `'`)
 
+	// Remove non-printable and control characters
 	query = strings.Map(func(r rune) rune {
 		if unicode.IsControl(r) && r != '\n' && r != '\t' {
 			return -1
@@ -28,14 +31,14 @@ func sanitizeQuery(query string) string {
 		return r
 	}, query)
 
+	// Collapse multiple spaces
 	query = regexp.MustCompile(`\s+`).ReplaceAllString(query, " ")
 
-	return query
-}
+	// Optional: block regex control chars if ExactMatch is false
+	// (handled already by regexp.QuoteMeta but can be conservative)
+	// query = strings.ReplaceAll(query, `\`, ``)
 
-type sseMessage struct {
-	event string
-	data  gin.H
+	return query
 }
 
 func (api *API) SetupRoutes() {
@@ -44,11 +47,11 @@ func (api *API) SetupRoutes() {
 	})
 
 	api.Router.GET("/search", func(c *gin.Context) {
-		// Prepare headers for SSE
 		c.Writer.Header().Set("Content-Type", "text/event-stream")
 		c.Writer.Header().Set("Cache-Control", "no-cache")
 		c.Writer.Header().Set("Connection", "keep-alive")
 		c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
+		c.Writer.Flush()
 
 		flusher, ok := c.Writer.(http.Flusher)
 		if !ok {
@@ -56,93 +59,57 @@ func (api *API) SetupRoutes() {
 			return
 		}
 
-		// Context to cancel if client disconnects
-		ctx := c.Request.Context()
-
-		// Channel for safely sending events to the client
-		sseChan := make(chan sseMessage)
-		defer close(sseChan)
-
-		// Writer goroutine
-		go func() {
-			for {
-				select {
-				case msg, ok := <-sseChan:
-					if !ok {
-						// Channel closed, goroutine should exit
-						return
-					}
-					// Check if client has disconnected before attempting to write
-					select {
-					case <-ctx.Done():
-						// Client disconnected, do not write
-						log.Printf("Client disconnected, abandoning SSE write for event %s", msg.event)
-						return
-					default:
-						// Client still connected, proceed to write
-						sendSSEEvent(c.Writer, msg.event, msg.data)
-						flusher.Flush()
-					}
-				case <-ctx.Done():
-					// Context cancelled (client disconnected), goroutine should exit
-					return
-				}
-			}
-		}()
-
 		query := leak.ParseQuery(sanitizeQuery(c.Query("q")))
 		if len(query.Terms) == 0 {
-			sseChan <- sseMessage{"error", gin.H{"message": "Invalid query: no search terms provided."}}
+			sendSSEEvent(c.Writer, flusher, "error", gin.H{"message": "Invalid query: no search terms provided."})
 			return
 		}
 
 		columns := strings.Split(c.Query("columns"), ",")
-		if len(columns) == 0 || (len(columns) == 1 && columns[0] == "") {
-			sseChan <- sseMessage{"error", gin.H{"message": "Invalid query: no columns provided."}}
+		if len(columns) == 0 {
+			sendSSEEvent(c.Writer, flusher, "error", gin.H{"message": "Invalid query: no columns provided."})
 			return
 		}
+		fulltext := slices.Contains(columns, "full_text")
 
 		if api.Dataleaks.TotalDataleaks == 0 {
-			sseChan <- sseMessage{"error", gin.H{"message": "No parquet files configured."}}
+			sendSSEEvent(c.Writer, flusher, "error", gin.H{"message": "No parquet files configured."})
 			return
 		}
 
-		sseChan <- sseMessage{"start", gin.H{"percentage": 0}}
+		sendSSEEvent(c.Writer, flusher, "start", gin.H{"percentage": 0})
 
-		// Launch concurrent workers for each dataleak
-		done := make(chan struct{})
+		for i, file := range api.Dataleaks.Dataleaks {
+			progress := float64(i) / float64(api.Dataleaks.TotalDataleaks) * 100
 
-		go func() {
-			defer close(done)
-			for i, file := range api.Dataleaks.Dataleaks {
-				progress := float64(i) / float64(api.Dataleaks.TotalDataleaks) * 100
-				sseChan <- sseMessage{"progress", gin.H{"percentage": progress}}
+			sendSSEEvent(c.Writer, flusher, "progress", gin.H{
+				"percentage": progress,
+			})
 
-				results, err := api.Dataleaks.Search(file.Path, columns, query)
-				if err != nil {
-					sseChan <- sseMessage{"file_error", gin.H{
-						"file_path": file.Path,
-						"message":   fmt.Sprintf("Error processing file: %s", err.Error()),
-					}}
-					continue
-				}
-
-				if len(results) > 0 {
-					sseChan <- sseMessage{"new_results", gin.H{"results": results}}
-				}
+			results, err := api.Dataleaks.Search(file.Path, columns, query, fulltext)
+			if err != nil {
+				sendSSEEvent(c.Writer, flusher, "file_error", gin.H{
+					"file_path": file.Path,
+					"message":   fmt.Sprintf("Error processing file: %s", err.Error()),
+				})
+				continue
 			}
-		}()
 
-		<-done
-		sseChan <- sseMessage{"complete", gin.H{}}
+			sendSSEEvent(c.Writer, flusher, "new_results", gin.H{
+				"results": results,
+			})
+		}
+
+		sendSSEEvent(c.Writer, flusher, "complete", gin.H{})
 	})
 }
 
-func sendSSEEvent(w http.ResponseWriter, eventType string, data gin.H) {
+func sendSSEEvent(w http.ResponseWriter, flusher http.Flusher, eventType string, data gin.H) {
 	jsonData, err := json.Marshal(data)
 	if err != nil {
 		log.Printf("Error marshalling SSE data for event %s: %v", eventType, err)
 		return
 	}
 	fmt.Fprintf(w, "event: %s\ndata: %s\n\n", eventType, jsonData)
+	flusher.Flush()
 }

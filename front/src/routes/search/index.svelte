@@ -70,17 +70,21 @@
       ExactMatch: exactMatch,
     });
 
+    console.log("Chosen column:", choosenColumn);
     let cols = choosenColumn;
     if (cols === "all") {
       cols = "username,email,name,password";
     }
+    cols = cols.replace(" ", "_");
     cols = cols.split(",").map((col) => {
       return col.trim() === "name" ? "full_name" : col.trim();
     }).join(",");
     if (cols === "name"){
       cols = "full_name";
     }
+    console.log("Columns to search:", cols);
 
+    // TODO: Doesn't work
     if (!q) {
       alert("Please enter a search query.");
       return;

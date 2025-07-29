@@ -27,12 +27,9 @@ mv tmp fichier.csv
 
 ## Todolist
 
+- Responsive
 - README
 - Nix developpe launch bun server
-- Responsive
-- Fix full name
-- full text
 - ingest new dataleaks
+
 - Ghunt, gh-recon, sherlock & holehe implementation
-- Fix error, check images
-- Rename alien files

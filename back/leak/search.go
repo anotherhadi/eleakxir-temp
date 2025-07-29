@@ -28,7 +28,7 @@ func (d *Dataleaks) GetDataleakFromPath(path string) (*Dataleak, error) {
 	return nil, fmt.Errorf("dataleak not found for path: %s", path)
 }
 
-func (d *Dataleaks) Search(parquetFile string, columns []string, query Query) ([]Result, error) {
+func (d *Dataleaks) Search(parquetFile string, columns []string, query Query, fulltext bool) ([]Result, error) {
 	// Get the dataleak from the path
 	dataleak, err := d.GetDataleakFromPath(parquetFile)
 	if err != nil {
@@ -42,33 +42,49 @@ func (d *Dataleaks) Search(parquetFile string, columns []string, query Query) ([
 			validColumns = append(validColumns, col)
 		}
 	}
-	if len(validColumns) == 0 {
+	if len(validColumns) == 0 && !fulltext {
 		return []Result{}, nil
 	}
 
 	// Build condition
-	var orClauses []string
-	for _, col := range validColumns {
-		var andClauses []string
+	var condition string
+	if fulltext {
+		var termClauses []string
 		for _, term := range query.Terms {
 			termEscaped := strings.ReplaceAll(term, "'", "''")
-			if query.ExactMatch {
-				andClauses = append(andClauses, fmt.Sprintf("%s = '%s'", col, termEscaped))
-			} else {
-				termEscaped := strings.ReplaceAll(termEscaped, "_", "\\_")
-				termEscaped = strings.ReplaceAll(termEscaped, "%", "\\%")
-				andClauses = append(andClauses, fmt.Sprintf("lower(%s) ILIKE '%%%s%%' ESCAPE '\\'", col, strings.ToLower(termEscaped)))
-			}
+			termEscaped = strings.ReplaceAll(termEscaped, "_", "\\_")
+			termEscaped = strings.ReplaceAll(termEscaped, "%", "\\%")
+
+			concatCols := "lower(" + strings.Join(dataleak.Columns, " || ' ' || ") + ")"
+			termClauses = append(termClauses,
+				fmt.Sprintf("%s ILIKE '%%%s%%' ESCAPE '\\'", concatCols, strings.ToLower(termEscaped)))
 		}
-		orClauses = append(orClauses, "("+strings.Join(andClauses, " AND ")+")")
+		condition = strings.Join(termClauses, " AND ")
+	} else {
+		var orClauses []string
+		for _, col := range validColumns {
+			var andClauses []string
+			for _, term := range query.Terms {
+				termEscaped := strings.ReplaceAll(term, "'", "''")
+				if query.ExactMatch {
+					andClauses = append(andClauses, fmt.Sprintf("%s = '%s'", col, termEscaped))
+				} else {
+					termEscaped := strings.ReplaceAll(termEscaped, "_", "\\_")
+					termEscaped = strings.ReplaceAll(termEscaped, "%", "\\%")
+					andClauses = append(andClauses, fmt.Sprintf("lower(%s) ILIKE '%%%s%%' ESCAPE '\\'", col, strings.ToLower(termEscaped)))
+				}
+			}
+			orClauses = append(orClauses, "("+strings.Join(andClauses, " AND ")+")")
+		}
+		condition = strings.Join(orClauses, " OR ")
 	}
-	condition := strings.Join(orClauses, " OR ")
+	fmt.Println(condition)
 
 	// Start the search
 	var results []Result
 
 	parquetPath := filepath.Join(d.DataleaksDirectory, parquetFile)
-	sqlQuery := fmt.Sprintf("SELECT * FROM '%s' WHERE %s LIMIT 100", parquetPath, condition)
+	sqlQuery := fmt.Sprintf("SELECT * FROM '%s' WHERE %s LIMIT 200", parquetPath, condition)
 	rows, err := d.Duckdb.Query(sqlQuery)
 	if err != nil {
 		return nil, err
