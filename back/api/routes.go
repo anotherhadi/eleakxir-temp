@@ -69,11 +69,22 @@ func (api *API) SetupRoutes() {
 				select {
 				case msg, ok := <-sseChan:
 					if !ok {
+						// Channel closed, goroutine should exit
 						return
 					}
-					sendSSEEvent(c.Writer, msg.event, msg.data)
-					flusher.Flush()
+					// Check if client has disconnected before attempting to write
+					select {
+					case <-ctx.Done():
+						// Client disconnected, do not write
+						log.Printf("Client disconnected, abandoning SSE write for event %s", msg.event)
+						return
+					default:
+						// Client still connected, proceed to write
+						sendSSEEvent(c.Writer, msg.event, msg.data)
+						flusher.Flush()
+					}
 				case <-ctx.Done():
+					// Context cancelled (client disconnected), goroutine should exit
 					return
 				}
 			}
