@@ -37,12 +37,12 @@ in {
       };
       leakPath = lib.mkOption {
         type = lib.types.str;
-        default = "";
+        default = "/var/lib/${appname}-backend/leaks";
         description = "Path to the leaks directory.";
       };
       cachePath = lib.mkOption {
         type = lib.types.str;
-        default = "";
+        default = "/var/lib/${appname}-backend/cache";
         description = "Path to the cache directory.";
       };
     };
@@ -52,6 +52,12 @@ in {
         isSystemUser = true;
         group = config.services."${appname}-backend".group;
       };
+
+      systemd.tmpfiles.rules = [
+        "d /var/lib/${appname}-backend 0755 ${config.services."${appname}-backend".user} ${config.services."${appname}-backend".group} -"
+        "d /var/lib/${appname}-backend/leaks 0775 ${config.services."${appname}-backend".user} ${config.services."${appname}-backend".group} -"
+        "d /var/lib/${appname}-backend/cache 0775 ${config.services."${appname}-backend".user} ${config.services."${appname}-backend".group} -"
+      ];
 
       systemd.services."${appname}-backend" = {
         description = "${appname} Backend Service";
