@@ -57,7 +57,7 @@ in {
           Restart = "always";
           User = config.services."${appname}-backend".user;
           Group = config.services."${appname}-backend".group;
-          DynamicUser = true;
+          DynamicUser = false;
           StateDirectory = appname + "-backend";
           ReadWritePaths = ["/var/lib/${appname}-backend"];
           Environment = [
