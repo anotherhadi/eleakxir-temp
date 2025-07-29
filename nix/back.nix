@@ -55,8 +55,8 @@ in {
 
       systemd.tmpfiles.rules = [
         "d /var/lib/${appname}-backend 0755 ${config.services."${appname}-backend".user} ${config.services."${appname}-backend".group} -"
-        "d /var/lib/${appname}-backend/leaks 0775 ${config.services."${appname}-backend".user} ${config.services."${appname}-backend".group} -"
-        "d /var/lib/${appname}-backend/cache 0775 ${config.services."${appname}-backend".user} ${config.services."${appname}-backend".group} -"
+        "d ${config.services."${appname}-backend".leakPath} 0775 ${config.services."${appname}-backend".user} ${config.services."${appname}-backend".group} -"
+        "d ${config.services."${appname}-backend".cachePath} 0775 ${config.services."${appname}-backend".user} ${config.services."${appname}-backend".group} -"
       ];
 
       systemd.services."${appname}-backend" = {
