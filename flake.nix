@@ -71,6 +71,8 @@
         ];
         shellHook = ''
           echo "Welcome to the Eleakxir dev shell!"
+          cd front
+          bun install && bun dev
         '';
       };
     });

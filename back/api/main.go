@@ -6,8 +6,9 @@ import (
 )
 
 type API struct {
-	Router    *gin.Engine
-	Dataleaks *leak.Dataleaks
+	Router                *gin.Engine
+	Dataleaks             *leak.Dataleaks
+	MaxConcurrentSearches int
 }
 
 func CORSMiddleware() gin.HandlerFunc {
@@ -27,15 +28,16 @@ func CORSMiddleware() gin.HandlerFunc {
 	}
 }
 
-func NewAPI(dataleaks *leak.Dataleaks, dev bool) *API {
+func NewAPI(dataleaks *leak.Dataleaks, MaxConcurrentSearches int, dev bool) *API {
 	if dev == false {
 		gin.SetMode(gin.ReleaseMode)
 	}
 	router := gin.Default()
 	router.Use(CORSMiddleware())
 	api := &API{
-		Router:    router,
-		Dataleaks: dataleaks,
+		Router:                router,
+		Dataleaks:             dataleaks,
+		MaxConcurrentSearches: MaxConcurrentSearches,
 	}
 
 	api.SetupRoutes()

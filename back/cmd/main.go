@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 
 	"github.com/anotherhadi/eleakxir/api"
 	"github.com/anotherhadi/eleakxir/leak"
@@ -21,6 +22,15 @@ func main() {
 	if port == "" {
 		port = "8080"
 	}
+	maxConcurrentSearchesStr := os.Getenv("MAX_CONCURRENT_SEARCHES")
+	maxConcurrentSearches := 8
+	if maxConcurrentSearchesStr != "" {
+		var err error
+		maxConcurrentSearches, err = strconv.Atoi(maxConcurrentSearchesStr)
+		if err != nil {
+			panic("Invalid MAX_CONCURRENT_SEARCHES environment variable: " + err.Error())
+		}
+	}
 	devStr := os.Getenv("DEV")
 	dev := false
 	if devStr == "TRUE" {
@@ -33,7 +43,7 @@ func main() {
 	}
 	defer d.CloseDataleaks()
 
-	api := api.NewAPI(d, dev)
+	api := api.NewAPI(d, maxConcurrentSearches, dev)
 	err = api.Run(":" + port)
 	if err != nil {
 		panic(err)

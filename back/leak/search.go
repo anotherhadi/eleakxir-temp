@@ -78,7 +78,6 @@ func (d *Dataleaks) Search(parquetFile string, columns []string, query Query, fu
 		}
 		condition = strings.Join(orClauses, " OR ")
 	}
-	fmt.Println(condition)
 
 	// Start the search
 	var results []Result

@@ -8,8 +8,6 @@ import (
 	"regexp"
 	"slices"
 	"strings"
-	"sync"
-	"sync/atomic"
 	"unicode"
 
 	"github.com/anotherhadi/eleakxir/leak"
@@ -36,6 +34,10 @@ func sanitizeQuery(query string) string {
 	// Collapse multiple spaces
 	query = regexp.MustCompile(`\s+`).ReplaceAllString(query, " ")
 
+	// Optional: block regex control chars if ExactMatch is false
+	// (handled already by regexp.QuoteMeta but can be conservative)
+	// query = strings.ReplaceAll(query, `\`, ``)
+
 	return query
 }
 
@@ -57,19 +59,14 @@ func (api *API) SetupRoutes() {
 			return
 		}
 
-		rawQuery := c.Query("q")
-		if rawQuery == "" {
-			sendSSEEvent(c.Writer, flusher, "error", gin.H{"message": "Invalid query: no search terms provided."})
-			return
-		}
-		query := leak.ParseQuery(sanitizeQuery(rawQuery))
+		query := leak.ParseQuery(sanitizeQuery(c.Query("q")))
 		if len(query.Terms) == 0 {
 			sendSSEEvent(c.Writer, flusher, "error", gin.H{"message": "Invalid query: no search terms provided."})
 			return
 		}
 
 		columns := strings.Split(c.Query("columns"), ",")
-		if len(columns) == 0 || (len(columns) == 1 && columns[0] == "") {
+		if len(columns) == 0 {
 			sendSSEEvent(c.Writer, flusher, "error", gin.H{"message": "Invalid query: no columns provided."})
 			return
 		}
@@ -82,47 +79,26 @@ func (api *API) SetupRoutes() {
 
 		sendSSEEvent(c.Writer, flusher, "start", gin.H{"percentage": 0})
 
-		var (
-			wg          sync.WaitGroup
-			fileCounter int64
-			mu          sync.Mutex // For protecting fileCounter and results sending
-		)
+		for i, file := range api.Dataleaks.Dataleaks {
+			progress := float64(i) / float64(api.Dataleaks.TotalDataleaks) * 100
 
-		sem := make(chan struct{}, api.MaxConcurrentSearches) // Semaphore to limit concurrency
+			sendSSEEvent(c.Writer, flusher, "progress", gin.H{
+				"percentage": progress,
+			})
 
-		for _, file := range api.Dataleaks.Dataleaks {
-			wg.Add(1)
-			sem <- struct{}{} // Acquire a token (block if at max concurrency)
+			results, err := api.Dataleaks.Search(file.Path, columns, query, fulltext)
+			if err != nil {
+				sendSSEEvent(c.Writer, flusher, "file_error", gin.H{
+					"file_path": file.Path,
+					"message":   fmt.Sprintf("Error processing file: %s", err.Error()),
+				})
+				continue
+			}
 
-			go func(file leak.Dataleak) {
-				defer wg.Done()
-				defer func() { <-sem }() // Release the token when done
-
-				results, err := api.Dataleaks.Search(file.Path, columns, query, fulltext)
-
-				mu.Lock()
-				atomic.AddInt64(&fileCounter, 1) // Atomically increment file counter
-				progress := float64(fileCounter) / float64(api.Dataleaks.TotalDataleaks) * 100
-				sendSSEEvent(c.Writer, flusher, "progress", gin.H{"percentage": progress})
-				mu.Unlock()
-
-				if err != nil {
-					sendSSEEvent(c.Writer, flusher, "file_error", gin.H{
-						"file_path": file.Path,
-						"message":   fmt.Sprintf("Error processing file: %s", err.Error()),
-					})
-					return
-				}
-
-				if len(results) > 0 { // Only send if there are results
-					sendSSEEvent(c.Writer, flusher, "new_results", gin.H{
-						"results": results,
-					})
-				}
-			}(file)
+			sendSSEEvent(c.Writer, flusher, "new_results", gin.H{
+				"results": results,
+			})
 		}
-
-		wg.Wait() // Wait for all goroutines to complete
 
 		sendSSEEvent(c.Writer, flusher, "complete", gin.H{})
 	})
