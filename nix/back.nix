@@ -48,6 +48,11 @@ in {
     };
 
     config = lib.mkIf config.services."${appname}-backend".enable {
+      users.users."${config.services."${appname}-backend".user}" = {
+        isSystemUser = true;
+        group = config.services."${appname}-backend".group;
+      };
+
       systemd.services."${appname}-backend" = {
         description = "${appname} Backend Service";
         after = ["network.target"];
